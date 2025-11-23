@@ -468,6 +468,122 @@ app.get("/api/me/portfolio", requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/public/portfolios/{id}:
+ *   get:
+ *     summary: Get public portfolio detail by profile id
+ *     description: >
+ *       Returns profile, experiences, and projects (with parts) for a given profile id.
+ *       This endpoint is public and does not require authentication.
+ *     tags: [Public]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           description: Profile ID (UUID)
+ *     responses:
+ *       200:
+ *         description: Public portfolio detail
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/MyPortfolio'
+ *       404:
+ *         description: Profile not found
+ *       500:
+ *         description: Internal server error
+ */
+
+app.get("/api/public/portfolios/:id", async (req, res) => {
+  try {
+    const profileId = req.params.id;
+
+    // 1) ดึง profile ตาม id (ไม่ auto-create)
+    const { data: profile, error: pErr } = await supabase
+      .from("profiles")
+      .select(
+        "id, user_id, first_name, last_name, about, avatar_url, is_featured, updated_at"
+      )
+      .eq("id", profileId)
+      .maybeSingle();
+
+    if (pErr) {
+      console.error("Public portfolio profile error:", pErr.message);
+      return res.status(500).json({ error: pErr.message });
+    }
+
+    if (!profile) {
+      return res.status(404).json({ error: "Profile not found" });
+    }
+
+    // 2) experiences ของ profile นี้
+    const { data: experiences, error: eErr } = await supabase
+      .from("experiences")
+      .select("*")
+      .eq("profile_id", profileId)
+      .order("order_index", { ascending: true });
+
+    if (eErr) {
+      console.error("Public portfolio experiences error:", eErr.message);
+      return res.status(500).json({ error: eErr.message });
+    }
+
+    // 3) projects + parts ของ profile นี้
+    const { data: projectsData, error: prErr } = await supabase
+      .from("projects")
+      .select("id, profile_id, title, subtitle, cover_image_url, order_index")
+      .eq("profile_id", profileId)
+      .order("order_index", { ascending: true });
+
+    if (prErr) {
+      console.error("Public portfolio projects error:", prErr.message);
+      return res.status(500).json({ error: prErr.message });
+    }
+
+    let projects = projectsData || [];
+    if (projects.length > 0) {
+      const projectIds = projects.map((p) => p.id);
+
+      const { data: partsData, error: partsErr } = await supabase
+        .from("project_parts")
+        .select("*")
+        .in("project_id", projectIds)
+        .order("order_index", { ascending: true });
+
+      if (partsErr) {
+        console.error("Public portfolio parts error:", partsErr.message);
+        return res.status(500).json({ error: partsErr.message });
+      }
+
+      const parts = partsData || [];
+      const partsByProject = {};
+      for (const part of parts) {
+        if (!partsByProject[part.project_id]) {
+          partsByProject[part.project_id] = [];
+        }
+        partsByProject[part.project_id].push(part);
+      }
+
+      projects = projects.map((p) => ({
+        ...p,
+        parts: partsByProject[p.id] || [],
+      }));
+    }
+
+    return res.json({
+      profile,
+      experiences: experiences || [],
+      projects,
+    });
+  } catch (err) {
+    console.error("Unexpected public portfolio detail error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // PUT /api/me/profile
 /**
  * @swagger

@@ -1570,11 +1570,6 @@ const swaggerOptions = {
       version: "1.0.0",
       description: "API for portfolio + auth using Supabase backend",
     },
-    servers: [
-      {
-        url: "http://localhost:3000",
-      },
-    ],
     components: {
       securitySchemes: {
         bearerAuth: {

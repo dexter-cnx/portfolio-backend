@@ -3,6 +3,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import swaggerJsdoc from "swagger-jsdoc";
+import swaggerUi from "swagger-ui-express";
 
 dotenv.config();
 
@@ -24,6 +26,21 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
+
+/**
+ * @swagger
+ * tags:
+ *   - name: Auth
+ *     description: Authentication APIs
+ *   - name: Public
+ *     description: Public portfolio APIs
+ *   - name: Me
+ *     description: Current user's portfolio APIs
+ *   - name: Experiences
+ *     description: CRUD experiences of current user
+ *   - name: Projects
+ *     description: CRUD projects of current user
+ */
 
 // ----------------------
 // Helpers
@@ -85,6 +102,53 @@ async function requireAuth(req, res, next) {
   next();
 }
 
+/**
+ * @swagger
+ * /api/auth/register:
+ *   post:
+ *     summary: Register new user with email & password
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               password:
+ *                 type: string
+ *                 format: password
+ *     responses:
+ *       200:
+ *         description: Registered successfully (may also return token if auto-login is possible)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 token:
+ *                   type: string
+ *                   nullable: true
+ *                 user:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                     email:
+ *                       type: string
+ *                 message:
+ *                   type: string
+ *       400:
+ *         description: Invalid input or email already used
+ *       500:
+ *         description: Internal server error
+ */
 // ----------------------
 // Auth endpoints
 // ----------------------
@@ -163,6 +227,51 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/login:
+ *   post:
+ *     summary: Login with email & password
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               password:
+ *                 type: string
+ *                 format: password
+ *     responses:
+ *       200:
+ *         description: Login success, return token & user info
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 token:
+ *                   type: string
+ *                 user:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                     email:
+ *                       type: string
+ *       401:
+ *         description: Invalid email or password
+ *       500:
+ *         description: Internal server error
+ */
+
 // POST /api/auth/login
 // body: { email, password }
 app.post("/api/auth/login", async (req, res) => {
@@ -207,6 +316,22 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/logout:
+ *   post:
+ *     summary: Logout current user (stateless)
+ *     description: >
+ *       For stateless JWT: backend just returns success, frontend should forget the token.
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Logout success
+ *       401:
+ *         description: Unauthorized
+ */
 // POST /api/auth/logout
 app.post("/api/auth/logout", requireAuth, (req, res) => {
   // ใช้ token-based stateless -> แค่ให้ frontend ลบ token ก็พอ
@@ -216,6 +341,33 @@ app.post("/api/auth/logout", requireAuth, (req, res) => {
 // ----------------------
 // Public portfolios
 // ----------------------
+/**
+ * @swagger
+ * /api/public/portfolios:
+ *   get:
+ *     summary: Get featured and all public portfolios
+ *     tags: [Public]
+ *     responses:
+ *       200:
+ *         description: List of public portfolios
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 featured:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     description: Minimal profile info for featured portfolios
+ *                 list:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     description: Minimal profile info for all portfolios
+ *       500:
+ *         description: Internal server error
+ */
 
 // GET /api/public/portfolios
 // -> { featured: [...], list: [...] }
@@ -263,7 +415,37 @@ app.get("/api/public/portfolios", async (req, res) => {
 // ----------------------
 // Me / Portfolio (รวมทั้งหมดทีเดียว)
 // ----------------------
-
+/**
+ * @swagger
+ * /api/me/portfolio:
+ *   get:
+ *     summary: Get current user's portfolio (profile + experiences + projects)
+ *     tags: [Me]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Portfolio data of current user
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 profile:
+ *                   type: object
+ *                 experiences:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                 projects:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
 // GET /api/me/portfolio
 // -> { profile, experiences, projects }
 app.get("/api/me/portfolio", requireAuth, async (req, res) => {
@@ -337,6 +519,43 @@ app.get("/api/me/portfolio", requireAuth, async (req, res) => {
 });
 
 // PUT /api/me/profile
+/**
+ * @swagger
+ * /api/me/profile:
+ *   put:
+ *     summary: Update current user's profile
+ *     tags: [Me]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               first_name:
+ *                 type: string
+ *               last_name:
+ *                 type: string
+ *               about:
+ *                 type: string
+ *               avatar_url:
+ *                 type: string
+ *               is_featured:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Updated profile
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
 // body: { first_name, last_name, about, avatar_url, is_featured }
 app.put("/api/me/profile", requireAuth, async (req, res) => {
   try {
@@ -372,6 +591,28 @@ app.put("/api/me/profile", requireAuth, async (req, res) => {
 // ----------------------
 // CRUD: Experiences (ของ user ปัจจุบัน)
 // ----------------------
+/**
+ * @swagger
+ * /api/me/experiences:
+ *   get:
+ *     summary: Get all experiences of current user
+ *     tags: [Experiences]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of experiences
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
 
 // GET /api/me/experiences
 app.get("/api/me/experiences", requireAuth, async (req, res) => {
@@ -399,6 +640,52 @@ app.get("/api/me/experiences", requireAuth, async (req, res) => {
 });
 
 // POST /api/me/experiences
+/**
+ * @swagger
+ * /api/me/experiences:
+ *   post:
+ *     summary: Create new experience for current user
+ *     tags: [Experiences]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - company
+ *               - position
+ *             properties:
+ *               company:
+ *                 type: string
+ *               position:
+ *                 type: string
+ *               start_date:
+ *                 type: string
+ *                 format: date
+ *               end_date:
+ *                 type: string
+ *                 format: date
+ *               description:
+ *                 type: string
+ *               order_index:
+ *                 type: integer
+ *     responses:
+ *       201:
+ *         description: Experience created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *       400:
+ *         description: Missing required fields
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
 // body: { company, position, start_date, end_date, description, order_index? }
 app.post("/api/me/experiences", requireAuth, async (req, res) => {
   try {
@@ -469,6 +756,52 @@ app.post("/api/me/experiences", requireAuth, async (req, res) => {
 });
 
 // PUT /api/me/experiences/:id
+/**
+ * @swagger
+ * /api/me/experiences/{id}:
+ *   put:
+ *     summary: Update an experience of current user
+ *     tags: [Experiences]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Experience ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               company:
+ *                 type: string
+ *               position:
+ *                 type: string
+ *               start_date:
+ *                 type: string
+ *                 format: date
+ *               end_date:
+ *                 type: string
+ *                 format: date
+ *               description:
+ *                 type: string
+ *               order_index:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Updated experience
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Experience not found
+ *       500:
+ *         description: Internal server error
+ */
 app.put("/api/me/experiences/:id", requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -526,6 +859,29 @@ app.put("/api/me/experiences/:id", requireAuth, async (req, res) => {
 });
 
 // DELETE /api/me/experiences/:id
+/**
+ * @swagger
+ * /api/me/experiences/{id}:
+ *   delete:
+ *     summary: Delete an experience of current user
+ *     tags: [Experiences]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Experience ID
+ *     responses:
+ *       200:
+ *         description: Deleted successfully
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
 app.delete("/api/me/experiences/:id", requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -554,7 +910,28 @@ app.delete("/api/me/experiences/:id", requireAuth, async (req, res) => {
 // ----------------------
 // CRUD: Projects (ของ user ปัจจุบัน) + Parts
 // ----------------------
-
+/**
+ * @swagger
+ * /api/me/projects:
+ *   get:
+ *     summary: Get all projects of current user (with parts)
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of projects with parts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
 // GET /api/me/projects
 app.get("/api/me/projects", requireAuth, async (req, res) => {
   try {
@@ -610,6 +987,58 @@ app.get("/api/me/projects", requireAuth, async (req, res) => {
 });
 
 // POST /api/me/projects
+/**
+ * @swagger
+ * /api/me/projects:
+ *   post:
+ *     summary: Create new project for current user
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *             properties:
+ *               title:
+ *                 type: string
+ *               subtitle:
+ *                 type: string
+ *               cover_image_url:
+ *                 type: string
+ *               order_index:
+ *                 type: integer
+ *               parts:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     title:
+ *                       type: string
+ *                     content:
+ *                       type: string
+ *                     image_url:
+ *                       type: string
+ *                     link_url:
+ *                       type: string
+ *                     kind:
+ *                       type: string
+ *                     order_index:
+ *                       type: integer
+ *     responses:
+ *       201:
+ *         description: Project created
+ *       400:
+ *         description: Missing required fields
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
 // body: { title, subtitle?, cover_image_url?, order_index?, parts?: [ {...} ] }
 app.post("/api/me/projects", requireAuth, async (req, res) => {
   try {
@@ -703,6 +1132,65 @@ app.post("/api/me/projects", requireAuth, async (req, res) => {
 });
 
 // PUT /api/me/projects/:id
+/**
+ * @swagger
+ * /api/me/projects/{id}:
+ *   put:
+ *     summary: Update a project (and optionally its parts)
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Project ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               subtitle:
+ *                 type: string
+ *               cover_image_url:
+ *                 type: string
+ *               order_index:
+ *                 type: integer
+ *               parts:
+ *                 type: array
+ *                 description: >
+ *                   If provided, will replace all existing parts with these.
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     title:
+ *                       type: string
+ *                     content:
+ *                       type: string
+ *                     image_url:
+ *                       type: string
+ *                     link_url:
+ *                       type: string
+ *                     kind:
+ *                       type: string
+ *                     order_index:
+ *                       type: integer
+ *     responses:
+ *       200:
+ *         description: Updated project with parts
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Project not found
+ *       500:
+ *         description: Internal server error
+ */
 // body: { title?, subtitle?, cover_image_url?, order_index?, parts?: [ {...} ] }
 // parts จะใช้วิธีง่าย ๆ คือ ลบของเดิมทั้งหมดแล้ว insert ใหม่
 app.put("/api/me/projects/:id", requireAuth, async (req, res) => {
@@ -809,6 +1297,29 @@ app.put("/api/me/projects/:id", requireAuth, async (req, res) => {
 });
 
 // DELETE /api/me/projects/:id
+/**
+ * @swagger
+ * /api/me/projects/{id}:
+ *   delete:
+ *     summary: Delete a project and its parts
+ *     tags: [Projects]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Project ID
+ *     responses:
+ *       200:
+ *         description: Deleted successfully
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
+ */
 app.delete("/api/me/projects/:id", requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -844,6 +1355,194 @@ app.delete("/api/me/projects/:id", requireAuth, async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 });
+
+/**
+ * @swagger
+ * /api/auth/reset-password-request:
+ *   post:
+ *     summary: Request password reset via email
+ *     description: >
+ *       Sends a reset link to the email if it exists.
+ *       Response is the same regardless of whether the email exists (for security).
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *     responses:
+ *       200:
+ *         description: Reset request accepted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *       500:
+ *         description: Internal server error
+ */
+// POST /api/auth/reset-password-request
+// body: { email }
+app.post("/api/auth/reset-password-request", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const redirectTo =
+      process.env.PASSWORD_RESET_REDIRECT_URL ||
+      "https://your-frontend-domain/reset-password";
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo,
+    });
+
+    // เพื่อความปลอดภัย ให้ตอบ success เหมือนกันไม่ว่า email จะมีอยู่หรือไม่
+    if (error) {
+      console.error("resetPasswordForEmail error:", error.message);
+      return res.json({
+        success: true,
+        message: "If this email exists, a reset link has been sent.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "If this email exists, a reset link has been sent.",
+    });
+  } catch (err) {
+    console.error("Unexpected reset-password-request error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * @swagger
+ * /api/auth/reset-password:
+ *   post:
+ *     summary: Reset password using token from email link
+ *     tags: [Auth]
+ *     description: >
+ *       Use the access_token from Supabase's reset-password redirect URL and send it here with the new password.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - access_token
+ *               - new_password
+ *             properties:
+ *               access_token:
+ *                 type: string
+ *                 description: Token from URL query (Supabase recovery)
+ *               new_password:
+ *                 type: string
+ *                 format: password
+ *     responses:
+ *       200:
+ *         description: Password has been reset
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *       400:
+ *         description: Missing parameters
+ *       401:
+ *         description: Invalid or expired token
+ *       500:
+ *         description: Internal server error
+ */
+// POST /api/auth/reset-password
+// body: { access_token, new_password }
+app.post("/api/auth/reset-password", async (req, res) => {
+  try {
+    const { access_token, new_password } = req.body;
+
+    if (!access_token || !new_password) {
+      return res
+        .status(400)
+        .json({ error: "access_token and new_password are required" });
+    }
+
+    // 1) ใช้ token นี้ถาม Supabase ว่าเป็น user คนไหน
+    const { data, error } = await supabase.auth.getUser(access_token);
+
+    if (error || !data || !data.user) {
+      console.error(
+        "getUser (reset-password) error:",
+        error ? error.message : "no user"
+      );
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    const userId = data.user.id;
+
+    // 2) ใช้ admin API ตั้งรหัสใหม่ให้ user นี้
+    const { error: updateErr } = await supabase.auth.admin.updateUserById(
+      userId,
+      { password: new_password }
+    );
+
+    if (updateErr) {
+      console.error("updateUserById (reset-password) error:", updateErr.message);
+      return res.status(500).json({ error: updateErr.message });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Unexpected reset-password error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+const swaggerOptions = {
+  definition: {
+    openapi: "3.0.0",
+    info: {
+      title: "Portfolio API",
+      version: "1.0.0",
+      description: "API for portfolio + auth using Supabase backend",
+    },
+    servers: [
+      {
+        url: "http://localhost:3000",
+      },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+        },
+      },
+    },
+  },
+  // ให้มันไปอ่าน JSDoc comment จากไฟล์ไหนบ้าง
+  apis: ["./index.mjs"], // ถ้าแยกไฟล์ route ในอนาคตค่อยเพิ่ม path ตรงนี้
+};
+
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+
+// UI อยู่ที่ /api-docs
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // ----------------------
 // Start server

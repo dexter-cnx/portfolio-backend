@@ -26,8 +26,46 @@ const supabase = createClient(
 );
 
 // ----------------------
-// Helper: Auth middleware
+// Helpers
 // ----------------------
+
+async function getOrCreateProfileByUserId(userId) {
+  // หาว่ามี profile ของ user นี้หรือยัง
+  let { data: profile, error: pErr } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (pErr) {
+    console.error("Profile select error:", pErr.message);
+    throw new Error(pErr.message);
+  }
+
+  // ถ้ายังไม่มี profile ให้สร้างใหม่
+  if (!profile) {
+    const { data: inserted, error: insErr } = await supabase
+      .from("profiles")
+      .insert({
+        user_id: userId,
+        first_name: "",
+        last_name: "",
+        about: "",
+      })
+      .select("*")
+      .maybeSingle();
+
+    if (insErr) {
+      console.error("Profile insert error:", insErr.message);
+      throw new Error(insErr.message);
+    }
+    profile = inserted;
+  }
+
+  return profile;
+}
+
+// Auth middleware
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   if (!authHeader.startsWith("Bearer ")) {
@@ -37,8 +75,8 @@ async function requireAuth(req, res, next) {
   const token = authHeader.split(" ")[1];
 
   const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data?.user) {
-    console.error("Auth error:", error?.message);
+  if (error || !data || !data.user) {
+    console.error("Auth error:", error ? error.message : "no user");
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 
@@ -63,7 +101,6 @@ app.post("/api/auth/register", async (req, res) => {
         .json({ error: "Email and password are required" });
     }
 
-    // 1) Sign up user in Supabase Auth
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -77,65 +114,40 @@ app.post("/api/auth/register", async (req, res) => {
     const user = data.user;
     let session = data.session;
 
-    // ถ้าตั้งค่าให้ต้องยืนยัน email session อาจจะ null
-    // ถ้าอยากให้ dev flow ง่าย ลอง signIn อีกที
+    // ถ้าเปิด email confirmation อาจไม่มี session ให้ login ให้เลย
     if (!session) {
       const { data: loginData, error: loginError } =
-        await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+        await supabase.auth.signInWithPassword({ email, password });
 
       if (loginError) {
         console.error("Auto-login after signUp error:", loginError.message);
         return res.status(200).json({
-          // สมัครสำเร็จ แต่ไม่ได้ออก token
           token: null,
           user: {
             id: user.id,
             email: user.email,
           },
           message:
-            "User registered. Please verify email (if email confirmation is enabled).",
+            "User registered. Please verify email (if confirmation is enabled).",
         });
       }
 
       session = loginData.session;
     }
 
-    const token = session?.access_token;
+    const token = session ? session.access_token : null;
     if (!token || !user) {
       return res.status(500).json({
         error: "User created but no session token. Check Supabase auth config.",
       });
     }
 
-    // 2) Ensure profiles row exists for this user
-    //    ถ้ายังไม่มี profile ให้สร้าง
-    const { data: existingProfile, error: profileSelectError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (profileSelectError) {
-      console.error("Profile select error:", profileSelectError.message);
-    }
-
-    if (!existingProfile) {
-      const { error: profileInsertError } = await supabase
-        .from("profiles")
-        .insert({
-          user_id: user.id,
-          first_name: "",
-          last_name: "",
-          about: "",
-        });
-
-      if (profileInsertError) {
-        console.error("Profile insert error:", profileInsertError.message);
-        // ไม่ถึงกับต้อง fail ทั้ง login แต่อย่างน้อย log ไว้
-      }
+    // สร้าง profile ให้ user ถ้ายังไม่มี
+    try {
+      await getOrCreateProfileByUserId(user.id);
+    } catch (e) {
+      // ไม่ถึงกับ fail ทั้ง register แต่ log ไว้
+      console.error("Create profile after signUp error:", e.message);
     }
 
     return res.json({
@@ -174,7 +186,7 @@ app.post("/api/auth/login", async (req, res) => {
 
     const user = data.user;
     const session = data.session;
-    const token = session?.access_token;
+    const token = session ? session.access_token : null;
 
     if (!user || !token) {
       return res
@@ -196,22 +208,20 @@ app.post("/api/auth/login", async (req, res) => {
 });
 
 // POST /api/auth/logout
-// (ตรงนี้เราทำแค่ mock, ไม่ได้ revoke token จริง)
-// Frontend แค่ลบ token ฝั่งตัวเองก็พอ
 app.post("/api/auth/logout", requireAuth, (req, res) => {
+  // ใช้ token-based stateless -> แค่ให้ frontend ลบ token ก็พอ
   return res.json({ success: true });
 });
 
 // ----------------------
-// Public portfolio endpoints
+// Public portfolios
 // ----------------------
 
 // GET /api/public/portfolios
-// { featured: [...], list: [...] }
+// -> { featured: [...], list: [...] }
 app.get("/api/public/portfolios", async (req, res) => {
   try {
-    // featured portfolios
-    const { data: featured, error: fErr } = await supabase
+    const { data: featuredData, error: fErr } = await supabase
       .from("profiles")
       .select(
         "id, user_id, first_name, last_name, about, avatar_url, is_featured"
@@ -225,8 +235,7 @@ app.get("/api/public/portfolios", async (req, res) => {
       return res.status(500).json({ error: fErr.message });
     }
 
-    // all portfolios (คุณจะ filter เพิ่มเติมก็ได้ เช่น exclude featured)
-    const { data: all, error: aErr } = await supabase
+    const { data: allData, error: aErr } = await supabase
       .from("profiles")
       .select(
         "id, user_id, first_name, last_name, about, avatar_url, is_featured"
@@ -238,9 +247,12 @@ app.get("/api/public/portfolios", async (req, res) => {
       return res.status(500).json({ error: aErr.message });
     }
 
+    const featured = featuredData || [];
+    const all = allData || [];
+
     return res.json({
-      featured: featured ?? [],
-      list: all ?? [],
+      featured,
+      list: all,
     });
   } catch (err) {
     console.error("Unexpected public portfolios error:", err);
@@ -249,7 +261,7 @@ app.get("/api/public/portfolios", async (req, res) => {
 });
 
 // ----------------------
-// Authenticated portfolio endpoints
+// Me / Portfolio (รวมทั้งหมดทีเดียว)
 // ----------------------
 
 // GET /api/me/portfolio
@@ -257,42 +269,11 @@ app.get("/api/public/portfolios", async (req, res) => {
 app.get("/api/me/portfolio", requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
-
-    // 1) Get or create profile for this user
-    let { data: profile, error: pErr } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (pErr) {
-      console.error("Profile select error:", pErr.message);
-      return res.status(500).json({ error: pErr.message });
-    }
-
-    if (!profile) {
-      const { data: inserted, error: insErr } = await supabase
-        .from("profiles")
-        .insert({
-          user_id: userId,
-          first_name: "",
-          last_name: "",
-          about: "",
-        })
-        .select("*")
-        .maybeSingle();
-
-      if (insErr) {
-        console.error("Profile insert error:", insErr.message);
-        return res.status(500).json({ error: insErr.message });
-      }
-      profile = inserted;
-    }
-
+    const profile = await getOrCreateProfileByUserId(userId);
     const profileId = profile.id;
 
-    // 2) experiences
-    const { data: experiences, error: eErr } = await supabase
+    // experiences
+    const { data: experiencesData, error: eErr } = await supabase
       .from("experiences")
       .select("*")
       .eq("profile_id", profileId)
@@ -303,8 +284,8 @@ app.get("/api/me/portfolio", requireAuth, async (req, res) => {
       return res.status(500).json({ error: eErr.message });
     }
 
-    // 3) projects + parts
-    const { data: projects, error: prErr } = await supabase
+    // projects
+    const { data: projectsData, error: prErr } = await supabase
       .from("projects")
       .select("id, profile_id, title, subtitle, cover_image_url, order_index")
       .eq("profile_id", profileId)
@@ -315,11 +296,10 @@ app.get("/api/me/portfolio", requireAuth, async (req, res) => {
       return res.status(500).json({ error: prErr.message });
     }
 
-    let projectsWithParts = projects ?? [];
-    if (projectsWithParts.length > 0) {
-      const projectIds = projectsWithParts.map((p) => p.id);
-
-      const { data: parts, error: partsErr } = await supabase
+    let projects = projectsData || [];
+    if (projects.length > 0) {
+      const projectIds = projects.map((p) => p.id);
+      const { data: partsData, error: partsErr } = await supabase
         .from("project_parts")
         .select("*")
         .in("project_id", projectIds)
@@ -330,24 +310,25 @@ app.get("/api/me/portfolio", requireAuth, async (req, res) => {
         return res.status(500).json({ error: partsErr.message });
       }
 
+      const parts = partsData || [];
       const partsByProject = {};
-      for (const part of parts ?? []) {
+      for (const part of parts) {
         if (!partsByProject[part.project_id]) {
           partsByProject[part.project_id] = [];
         }
         partsByProject[part.project_id].push(part);
       }
 
-      projectsWithParts = projectsWithParts.map((p) => ({
+      projects = projects.map((p) => ({
         ...p,
-        parts: partsByProject[p.id] ?? [],
+        parts: partsByProject[p.id] || [],
       }));
     }
 
     return res.json({
       profile,
-      experiences: experiences ?? [],
-      projects: projectsWithParts,
+      experiences: experiencesData || [],
+      projects,
     });
   } catch (err) {
     console.error("Unexpected me/portfolio error:", err);
@@ -362,7 +343,6 @@ app.put("/api/me/profile", requireAuth, async (req, res) => {
     const userId = req.user.id;
     const { first_name, last_name, about, avatar_url, is_featured } = req.body;
 
-    // อัปเดตโดยอิง user_id
     const { data, error } = await supabase
       .from("profiles")
       .update({
@@ -385,6 +365,482 @@ app.put("/api/me/profile", requireAuth, async (req, res) => {
     return res.json(data);
   } catch (err) {
     console.error("Unexpected update profile error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ----------------------
+// CRUD: Experiences (ของ user ปัจจุบัน)
+// ----------------------
+
+// GET /api/me/experiences
+app.get("/api/me/experiences", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const profile = await getOrCreateProfileByUserId(userId);
+    const profileId = profile.id;
+
+    const { data, error } = await supabase
+      .from("experiences")
+      .select("*")
+      .eq("profile_id", profileId)
+      .order("order_index", { ascending: true });
+
+    if (error) {
+      console.error("Get experiences error:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json(data || []);
+  } catch (err) {
+    console.error("Unexpected get experiences error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /api/me/experiences
+// body: { company, position, start_date, end_date, description, order_index? }
+app.post("/api/me/experiences", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const profile = await getOrCreateProfileByUserId(userId);
+    const profileId = profile.id;
+
+    const {
+      company,
+      position,
+      start_date,
+      end_date,
+      description,
+      order_index,
+    } = req.body;
+
+    if (!company || !position) {
+      return res
+        .status(400)
+        .json({ error: "company and position are required" });
+    }
+
+    // หา order_index ถ้าไม่ได้ส่งมา
+    let finalOrderIndex = 1;
+    if (typeof order_index === "number") {
+      finalOrderIndex = order_index;
+    } else {
+      const { data: lastExp, error: lastErr } = await supabase
+        .from("experiences")
+        .select("order_index")
+        .eq("profile_id", profileId)
+        .order("order_index", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (lastErr) {
+        console.error("Get last experience error:", lastErr.message);
+      }
+      if (lastExp && typeof lastExp.order_index === "number") {
+        finalOrderIndex = lastExp.order_index + 1;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("experiences")
+      .insert({
+        profile_id: profileId,
+        company,
+        position,
+        start_date,
+        end_date,
+        description,
+        order_index: finalOrderIndex,
+      })
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.error("Insert experience error:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.status(201).json(data);
+  } catch (err) {
+    console.error("Unexpected create experience error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PUT /api/me/experiences/:id
+app.put("/api/me/experiences/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const profile = await getOrCreateProfileByUserId(userId);
+    const profileId = profile.id;
+    const id = parseInt(req.params.id, 10);
+
+    const {
+      company,
+      position,
+      start_date,
+      end_date,
+      description,
+      order_index,
+    } = req.body;
+
+    const updateData = {
+      company,
+      position,
+      start_date,
+      end_date,
+      description,
+      order_index,
+    };
+
+    // ลบ field ที่เป็น undefined ออก
+    Object.keys(updateData).forEach((key) => {
+      if (updateData[key] === undefined) {
+        delete updateData[key];
+      }
+    });
+
+    const { data, error } = await supabase
+      .from("experiences")
+      .update(updateData)
+      .eq("id", id)
+      .eq("profile_id", profileId)
+      .select("*")
+      .maybeSingle();
+
+    if (error) {
+      console.error("Update experience error:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+
+    if (!data) {
+      return res.status(404).json({ error: "Experience not found" });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    console.error("Unexpected update experience error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// DELETE /api/me/experiences/:id
+app.delete("/api/me/experiences/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const profile = await getOrCreateProfileByUserId(userId);
+    const profileId = profile.id;
+    const id = parseInt(req.params.id, 10);
+
+    const { error } = await supabase
+      .from("experiences")
+      .delete()
+      .eq("id", id)
+      .eq("profile_id", profileId);
+
+    if (error) {
+      console.error("Delete experience error:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Unexpected delete experience error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ----------------------
+// CRUD: Projects (ของ user ปัจจุบัน) + Parts
+// ----------------------
+
+// GET /api/me/projects
+app.get("/api/me/projects", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const profile = await getOrCreateProfileByUserId(userId);
+    const profileId = profile.id;
+
+    const { data: projectsData, error: pErr } = await supabase
+      .from("projects")
+      .select("id, profile_id, title, subtitle, cover_image_url, order_index")
+      .eq("profile_id", profileId)
+      .order("order_index", { ascending: true });
+
+    if (pErr) {
+      console.error("Get projects error:", pErr.message);
+      return res.status(500).json({ error: pErr.message });
+    }
+
+    let projects = projectsData || [];
+    if (projects.length > 0) {
+      const projectIds = projects.map((p) => p.id);
+      const { data: partsData, error: partsErr } = await supabase
+        .from("project_parts")
+        .select("*")
+        .in("project_id", projectIds)
+        .order("order_index", { ascending: true });
+
+      if (partsErr) {
+        console.error("Get project parts error:", partsErr.message);
+        return res.status(500).json({ error: partsErr.message });
+      }
+
+      const parts = partsData || [];
+      const partsByProject = {};
+      for (const part of parts) {
+        if (!partsByProject[part.project_id]) {
+          partsByProject[part.project_id] = [];
+        }
+        partsByProject[part.project_id].push(part);
+      }
+
+      projects = projects.map((p) => ({
+        ...p,
+        parts: partsByProject[p.id] || [],
+      }));
+    }
+
+    return res.json(projects);
+  } catch (err) {
+    console.error("Unexpected get projects error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /api/me/projects
+// body: { title, subtitle?, cover_image_url?, order_index?, parts?: [ {...} ] }
+app.post("/api/me/projects", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const profile = await getOrCreateProfileByUserId(userId);
+    const profileId = profile.id;
+
+    const {
+      title,
+      subtitle,
+      cover_image_url,
+      order_index,
+      parts: partsInput,
+    } = req.body;
+
+    if (!title) {
+      return res.status(400).json({ error: "title is required" });
+    }
+
+    // หา order_index ถ้าไม่ได้ส่งมา
+    let finalOrderIndex = 1;
+    if (typeof order_index === "number") {
+      finalOrderIndex = order_index;
+    } else {
+      const { data: lastProj, error: lastErr } = await supabase
+        .from("projects")
+        .select("order_index")
+        .eq("profile_id", profileId)
+        .order("order_index", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (lastErr) {
+        console.error("Get last project error:", lastErr.message);
+      }
+      if (lastProj && typeof lastProj.order_index === "number") {
+        finalOrderIndex = lastProj.order_index + 1;
+      }
+    }
+
+    // สร้าง project
+    const { data: project, error: projErr } = await supabase
+      .from("projects")
+      .insert({
+        profile_id: profileId,
+        title,
+        subtitle,
+        cover_image_url,
+        order_index: finalOrderIndex,
+      })
+      .select("*")
+      .maybeSingle();
+
+    if (projErr) {
+      console.error("Insert project error:", projErr.message);
+      return res.status(500).json({ error: projErr.message });
+    }
+
+    let parts = [];
+    if (Array.isArray(partsInput) && partsInput.length > 0) {
+      const rowsToInsert = partsInput.map((p, idx) => ({
+        project_id: project.id,
+        title: p.title || null,
+        content: p.content || null,
+        image_url: p.image_url || null,
+        link_url: p.link_url || null,
+        kind: p.kind || null,
+        order_index:
+          typeof p.order_index === "number" ? p.order_index : idx + 1,
+      }));
+
+      const { data: insertedParts, error: partsErr } = await supabase
+        .from("project_parts")
+        .insert(rowsToInsert)
+        .select("*")
+        .order("order_index", { ascending: true });
+
+      if (partsErr) {
+        console.error("Insert project parts error:", partsErr.message);
+        // ไม่ fail ทั้ง project แต่ log ไว้
+      } else {
+        parts = insertedParts || [];
+      }
+    }
+
+    return res.status(201).json({ ...project, parts });
+  } catch (err) {
+    console.error("Unexpected create project error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PUT /api/me/projects/:id
+// body: { title?, subtitle?, cover_image_url?, order_index?, parts?: [ {...} ] }
+// parts จะใช้วิธีง่าย ๆ คือ ลบของเดิมทั้งหมดแล้ว insert ใหม่
+app.put("/api/me/projects/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const profile = await getOrCreateProfileByUserId(userId);
+    const profileId = profile.id;
+    const projectId = parseInt(req.params.id, 10);
+
+    const {
+      title,
+      subtitle,
+      cover_image_url,
+      order_index,
+      parts: partsInput,
+    } = req.body;
+
+    const updateData = {
+      title,
+      subtitle,
+      cover_image_url,
+      order_index,
+    };
+
+    Object.keys(updateData).forEach((key) => {
+      if (updateData[key] === undefined) {
+        delete updateData[key];
+      }
+    });
+
+    const { data: project, error: projErr } = await supabase
+      .from("projects")
+      .update(updateData)
+      .eq("id", projectId)
+      .eq("profile_id", profileId)
+      .select("*")
+      .maybeSingle();
+
+    if (projErr) {
+      console.error("Update project error:", projErr.message);
+      return res.status(500).json({ error: projErr.message });
+    }
+
+    if (!project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    let parts = [];
+    if (Array.isArray(partsInput)) {
+      // ลบ parts เดิมทั้งหมด
+      const { error: delErr } = await supabase
+        .from("project_parts")
+        .delete()
+        .eq("project_id", projectId);
+
+      if (delErr) {
+        console.error("Delete old project parts error:", delErr.message);
+      }
+
+      if (partsInput.length > 0) {
+        const rowsToInsert = partsInput.map((p, idx) => ({
+          project_id: projectId,
+          title: p.title || null,
+          content: p.content || null,
+          image_url: p.image_url || null,
+          link_url: p.link_url || null,
+          kind: p.kind || null,
+          order_index:
+            typeof p.order_index === "number" ? p.order_index : idx + 1,
+        }));
+
+        const { data: insertedParts, error: partsErr } = await supabase
+          .from("project_parts")
+          .insert(rowsToInsert)
+          .select("*")
+          .order("order_index", { ascending: true });
+
+        if (partsErr) {
+          console.error("Insert new project parts error:", partsErr.message);
+        } else {
+          parts = insertedParts || [];
+        }
+      }
+    } else {
+      // ถ้าไม่ได้ส่ง parts มา ก็โหลด parts เดิมกลับไปให้
+      const { data: existingParts, error: partsErr } = await supabase
+        .from("project_parts")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("order_index", { ascending: true });
+
+      if (partsErr) {
+        console.error("Load existing project parts error:", partsErr.message);
+      } else {
+        parts = existingParts || [];
+      }
+    }
+
+    return res.json({ ...project, parts });
+  } catch (err) {
+    console.error("Unexpected update project error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// DELETE /api/me/projects/:id
+app.delete("/api/me/projects/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const profile = await getOrCreateProfileByUserId(userId);
+    const profileId = profile.id;
+    const projectId = parseInt(req.params.id, 10);
+
+    // ลบ parts ก่อน
+    const { error: partsErr } = await supabase
+      .from("project_parts")
+      .delete()
+      .eq("project_id", projectId);
+
+    if (partsErr) {
+      console.error("Delete project parts error:", partsErr.message);
+    }
+
+    // ลบ project
+    const { error: projErr } = await supabase
+      .from("projects")
+      .delete()
+      .eq("id", projectId)
+      .eq("profile_id", profileId);
+
+    if (projErr) {
+      console.error("Delete project error:", projErr.message);
+      return res.status(500).json({ error: projErr.message });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Unexpected delete project error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });

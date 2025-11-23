@@ -102,6 +102,9 @@ async function requireAuth(req, res, next) {
   next();
 }
 
+// ----------------------
+// Auth endpoints
+// ----------------------
 /**
  * @swagger
  * /api/auth/register:
@@ -114,9 +117,7 @@ async function requireAuth(req, res, next) {
  *         application/json:
  *           schema:
  *             type: object
- *             required:
- *               - email
- *               - password
+ *             required: [email, password]
  *             properties:
  *               email:
  *                 type: string
@@ -126,33 +127,16 @@ async function requireAuth(req, res, next) {
  *                 format: password
  *     responses:
  *       200:
- *         description: Registered successfully (may also return token if auto-login is possible)
+ *         description: Registered successfully
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 token:
- *                   type: string
- *                   nullable: true
- *                 user:
- *                   type: object
- *                   properties:
- *                     id:
- *                       type: string
- *                     email:
- *                       type: string
- *                 message:
- *                   type: string
+ *               $ref: '#/components/schemas/AuthResponse'
  *       400:
  *         description: Invalid input or email already used
  *       500:
  *         description: Internal server error
  */
-// ----------------------
-// Auth endpoints
-// ----------------------
-
 // POST /api/auth/register
 // body: { email, password }
 app.post("/api/auth/register", async (req, res) => {
@@ -227,6 +211,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+// POST /api/auth/login
 /**
  * @swagger
  * /api/auth/login:
@@ -239,9 +224,7 @@ app.post("/api/auth/register", async (req, res) => {
  *         application/json:
  *           schema:
  *             type: object
- *             required:
- *               - email
- *               - password
+ *             required: [email, password]
  *             properties:
  *               email:
  *                 type: string
@@ -251,28 +234,16 @@ app.post("/api/auth/register", async (req, res) => {
  *                 format: password
  *     responses:
  *       200:
- *         description: Login success, return token & user info
+ *         description: Login success
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 token:
- *                   type: string
- *                 user:
- *                   type: object
- *                   properties:
- *                     id:
- *                       type: string
- *                     email:
- *                       type: string
+ *               $ref: '#/components/schemas/AuthResponse'
  *       401:
  *         description: Invalid email or password
  *       500:
  *         description: Internal server error
  */
-
-// POST /api/auth/login
 // body: { email, password }
 app.post("/api/auth/login", async (req, res) => {
   try {
@@ -353,18 +324,7 @@ app.post("/api/auth/logout", requireAuth, (req, res) => {
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 featured:
- *                   type: array
- *                   items:
- *                     type: object
- *                     description: Minimal profile info for featured portfolios
- *                 list:
- *                   type: array
- *                   items:
- *                     type: object
- *                     description: Minimal profile info for all portfolios
+ *               $ref: '#/components/schemas/PublicPortfoliosResponse'
  *       500:
  *         description: Internal server error
  */
@@ -429,23 +389,13 @@ app.get("/api/public/portfolios", async (req, res) => {
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 profile:
- *                   type: object
- *                 experiences:
- *                   type: array
- *                   items:
- *                     type: object
- *                 projects:
- *                   type: array
- *                   items:
- *                     type: object
+ *               $ref: '#/components/schemas/MyPortfolio'
  *       401:
  *         description: Unauthorized
  *       500:
  *         description: Internal server error
  */
+
 // GET /api/me/portfolio
 // -> { profile, experiences, projects }
 app.get("/api/me/portfolio", requireAuth, async (req, res) => {
@@ -550,7 +500,7 @@ app.get("/api/me/portfolio", requireAuth, async (req, res) => {
  *         content:
  *           application/json:
  *             schema:
- *               type: object
+ *               $ref: '#/components/schemas/Profile'
  *       401:
  *         description: Unauthorized
  *       500:
@@ -607,12 +557,13 @@ app.put("/api/me/profile", requireAuth, async (req, res) => {
  *             schema:
  *               type: array
  *               items:
- *                 type: object
+ *                 $ref: '#/components/schemas/Experience'
  *       401:
  *         description: Unauthorized
  *       500:
  *         description: Internal server error
  */
+
 
 // GET /api/me/experiences
 app.get("/api/me/experiences", requireAuth, async (req, res) => {
@@ -654,9 +605,7 @@ app.get("/api/me/experiences", requireAuth, async (req, res) => {
  *         application/json:
  *           schema:
  *             type: object
- *             required:
- *               - company
- *               - position
+ *             required: [company, position]
  *             properties:
  *               company:
  *                 type: string
@@ -678,7 +627,7 @@ app.get("/api/me/experiences", requireAuth, async (req, res) => {
  *         content:
  *           application/json:
  *             schema:
- *               type: object
+ *               $ref: '#/components/schemas/Experience'
  *       400:
  *         description: Missing required fields
  *       401:
@@ -795,6 +744,10 @@ app.post("/api/me/experiences", requireAuth, async (req, res) => {
  *     responses:
  *       200:
  *         description: Updated experience
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Experience'
  *       401:
  *         description: Unauthorized
  *       404:
@@ -926,7 +879,7 @@ app.delete("/api/me/experiences/:id", requireAuth, async (req, res) => {
  *             schema:
  *               type: array
  *               items:
- *                 type: object
+ *                 $ref: '#/components/schemas/ProjectWithParts'
  *       401:
  *         description: Unauthorized
  *       500:
@@ -1001,8 +954,7 @@ app.get("/api/me/projects", requireAuth, async (req, res) => {
  *         application/json:
  *           schema:
  *             type: object
- *             required:
- *               - title
+ *             required: [title]
  *             properties:
  *               title:
  *                 type: string
@@ -1015,23 +967,14 @@ app.get("/api/me/projects", requireAuth, async (req, res) => {
  *               parts:
  *                 type: array
  *                 items:
- *                   type: object
- *                   properties:
- *                     title:
- *                       type: string
- *                     content:
- *                       type: string
- *                     image_url:
- *                       type: string
- *                     link_url:
- *                       type: string
- *                     kind:
- *                       type: string
- *                     order_index:
- *                       type: integer
+ *                   $ref: '#/components/schemas/ProjectPart'
  *     responses:
  *       201:
  *         description: Project created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ProjectWithParts'
  *       400:
  *         description: Missing required fields
  *       401:
@@ -1164,26 +1107,16 @@ app.post("/api/me/projects", requireAuth, async (req, res) => {
  *                 type: integer
  *               parts:
  *                 type: array
- *                 description: >
- *                   If provided, will replace all existing parts with these.
+ *                 description: If provided, will replace all existing parts.
  *                 items:
- *                   type: object
- *                   properties:
- *                     title:
- *                       type: string
- *                     content:
- *                       type: string
- *                     image_url:
- *                       type: string
- *                     link_url:
- *                       type: string
- *                     kind:
- *                       type: string
- *                     order_index:
- *                       type: integer
+ *                   $ref: '#/components/schemas/ProjectPart'
  *     responses:
  *       200:
  *         description: Updated project with parts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ProjectWithParts'
  *       401:
  *         description: Unauthorized
  *       404:
@@ -1191,6 +1124,7 @@ app.post("/api/me/projects", requireAuth, async (req, res) => {
  *       500:
  *         description: Internal server error
  */
+
 // body: { title?, subtitle?, cover_image_url?, order_index?, parts?: [ {...} ] }
 // parts จะใช้วิธีง่าย ๆ คือ ลบของเดิมทั้งหมดแล้ว insert ใหม่
 app.put("/api/me/projects/:id", requireAuth, async (req, res) => {
@@ -1533,11 +1467,142 @@ const swaggerOptions = {
           bearerFormat: "JWT",
         },
       },
+      schemas: {
+        User: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            email: { type: "string", format: "email" },
+          },
+          required: ["id", "email"],
+        },
+        Profile: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            user_id: { type: "string", format: "uuid" },
+            first_name: { type: "string" },
+            last_name: { type: "string" },
+            about: { type: "string", nullable: true },
+            avatar_url: { type: "string", nullable: true },
+            is_featured: { type: "boolean" },
+            updated_at: { type: "string", format: "date-time", nullable: true },
+          },
+          required: ["id", "user_id", "first_name", "last_name"],
+        },
+        Experience: {
+          type: "object",
+          properties: {
+            id: { type: "integer", format: "int64" },
+            profile_id: { type: "string", format: "uuid" },
+            company: { type: "string" },
+            position: { type: "string" },
+            start_date: { type: "string", format: "date", nullable: true },
+            end_date: { type: "string", format: "date", nullable: true },
+            description: { type: "string", nullable: true },
+            order_index: { type: "integer", format: "int32" },
+          },
+          required: ["id", "profile_id", "company", "position", "order_index"],
+        },
+        ProjectPart: {
+          type: "object",
+          properties: {
+            id: { type: "integer", format: "int64" },
+            project_id: { type: "integer", format: "int64" },
+            title: { type: "string", nullable: true },
+            content: { type: "string", nullable: true },
+            image_url: { type: "string", nullable: true },
+            link_url: { type: "string", nullable: true },
+            kind: { type: "string", nullable: true },
+            order_index: { type: "integer", format: "int32" },
+          },
+          required: ["id", "project_id", "order_index"],
+        },
+        Project: {
+          type: "object",
+          properties: {
+            id: { type: "integer", format: "int64" },
+            profile_id: { type: "string", format: "uuid" },
+            title: { type: "string" },
+            subtitle: { type: "string", nullable: true },
+            cover_image_url: { type: "string", nullable: true },
+            order_index: { type: "integer", format: "int32" },
+          },
+          required: ["id", "profile_id", "title", "order_index"],
+        },
+        ProjectWithParts: {
+          type: "object",
+          allOf: [
+            { $ref: "#/components/schemas/Project" },
+            {
+              type: "object",
+              properties: {
+                parts: {
+                  type: "array",
+                  items: { $ref: "#/components/schemas/ProjectPart" },
+                },
+              },
+            },
+          ],
+        },
+        MyPortfolio: {
+          type: "object",
+          properties: {
+            profile: { $ref: "#/components/schemas/Profile" },
+            experiences: {
+              type: "array",
+              items: { $ref: "#/components/schemas/Experience" },
+            },
+            projects: {
+              type: "array",
+              items: { $ref: "#/components/schemas/ProjectWithParts" },
+            },
+          },
+          required: ["profile", "experiences", "projects"],
+        },
+        PublicPortfolioItem: {
+          type: "object",
+          description: "Profile data used for public listing",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            user_id: { type: "string", format: "uuid" },
+            first_name: { type: "string" },
+            last_name: { type: "string" },
+            about: { type: "string", nullable: true },
+            avatar_url: { type: "string", nullable: true },
+            is_featured: { type: "boolean" },
+          },
+          required: ["id", "user_id", "first_name", "last_name"],
+        },
+        PublicPortfoliosResponse: {
+          type: "object",
+          properties: {
+            featured: {
+              type: "array",
+              items: { $ref: "#/components/schemas/PublicPortfolioItem" },
+            },
+            list: {
+              type: "array",
+              items: { $ref: "#/components/schemas/PublicPortfolioItem" },
+            },
+          },
+          required: ["featured", "list"],
+        },
+        AuthResponse: {
+          type: "object",
+          properties: {
+            token: { type: "string", nullable: true },
+            user: { $ref: "#/components/schemas/User" },
+            message: { type: "string", nullable: true },
+          },
+          required: ["user"],
+        },
+      },
     },
   },
-  // ให้มันไปอ่าน JSDoc comment จากไฟล์ไหนบ้าง
-  apis: ["./index.mjs"], // ถ้าแยกไฟล์ route ในอนาคตค่อยเพิ่ม path ตรงนี้
+  apis: ["./index.mjs"],
 };
+
 
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
 

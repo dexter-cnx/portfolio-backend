@@ -5,12 +5,21 @@ import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
+import crypto from "crypto";
+import multer from "multer";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+  },
+});
 
 const PORT = process.env.PORT || 3000;
 
@@ -40,6 +49,8 @@ const supabase = createClient(
  *     description: CRUD experiences of current user
  *   - name: Projects
  *     description: CRUD projects of current user
+ *   - name: Uploads
+ *     description: File upload APIs
  */
 
 // ----------------------
@@ -1713,6 +1724,168 @@ const swaggerOptions = {
   },
   apis: ["./index.mjs"],
 };
+
+// POST /api/analytics/visit
+// body: { visitor_id: string }
+app.post("/api/analytics/visit", async (req, res) => {
+  try {
+    const { visitor_id } = req.body || {};
+
+    if (!visitor_id) {
+      return res.status(400).json({ error: "visitor_id is required" });
+    }
+
+    const userAgent = req.headers["user-agent"] || null;
+    const ip =
+      (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim() ||
+      req.ip;
+
+    const ipHash = ip
+      ? crypto.createHash("sha256").update(ip).digest("hex")
+      : null;
+
+    const { error } = await supabase
+      .from("visitors")
+      .upsert(
+        {
+          visitor_id,
+          user_agent: userAgent,
+          ip_hash: ipHash,
+          last_seen: new Date().toISOString(),
+        },
+        { onConflict: "visitor_id" }
+      );
+
+    if (error) {
+      console.error("Upsert visitor error:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Unexpected /analytics/visit error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get("/api/analytics/summary", async (req, res) => {
+  try {
+    const { count, error } = await supabase
+      .from("visitors")
+      .select("visitor_id", { count: "exact", head: true });
+
+    if (error) {
+      console.error("Visitors summary error:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json({
+      unique_visitors: count ?? 0,
+    });
+  } catch (err) {
+    console.error("Unexpected /analytics/summary error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+
+// POST /api/uploads/image
+/**
+ * @swagger
+ * /api/uploads/image:
+ *   post:
+ *     summary: Upload an image file and return its public URL
+ *     tags: [Uploads]
+ *     security:
+ *       - bearerAuth: []  
+ *     description: >
+ *       Accepts a single image file and uploads it to Supabase Storage (bucket: portfolio-images).
+ *       Returns a publicly accessible URL.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Upload success
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 url:
+ *                   type: string
+ *                   description: Public URL of uploaded image
+ *       400:
+ *         description: No file provided or invalid file
+ *       500:
+ *         description: Internal server error
+ */
+// form-data: { file: <image> }
+app.post(
+  "/api/uploads/image",
+  requireAuth,
+  upload.single("file"), // ใช้ field name "file"
+  async (req, res) => {
+    try {
+      const file = req.file;
+
+      if (!file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      // ตรวจ mime type แบบง่าย ๆ
+      if (!file.mimetype.startsWith("image/")) {
+        return res.status(400).json({ error: "Only image files are allowed" });
+      }
+
+      // ตั้งชื่อไฟล์ใน bucket
+      const ext = file.originalname.split(".").pop();
+      const randomName = crypto.randomBytes(16).toString("hex");
+      const filePath = `images/${randomName}.${ext}`;
+
+      const { data, error } = await supabase.storage
+        .from("portfolio") // ✅ ใช้ bucket ที่สร้างไว้
+        .upload(filePath, file.buffer, {
+          contentType: file.mimetype,
+          upsert: false,
+        });
+
+      if (error) {
+        console.error("Supabase storage upload error:", error.message);
+        return res.status(500).json({ error: error.message });
+      }
+
+      // ขอ public URL กลับมา
+      const {
+        data: publicData,
+        error: publicErr,
+      } = supabase.storage
+        .from("portfolio")
+        .getPublicUrl(data.path);
+
+      if (publicErr) {
+        console.error("Supabase getPublicUrl error:", publicErr.message);
+        return res.status(500).json({ error: publicErr.message });
+      }
+
+      const publicUrl = publicData.publicUrl;
+
+      return res.json({
+        url: publicUrl,
+      });
+    } catch (err) {
+      console.error("Unexpected upload image error:", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
 
 
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
